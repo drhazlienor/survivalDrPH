@@ -1,0 +1,229 @@
+---
+title: "Survival Analysis"
+author: "Hazlienor"
+date: "2023-12-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Survival Analysis
+## Workflow
+1. prepare environment
+2. read data
+3. data exploration
+4. Kaplan-Meier Analysis
+
+## prepare environment
+```{r}
+library(tidyverse)
+library(psych)
+library(corrplot)
+library(knitr)
+library(broom)
+library(tidyr)
+library(survival)
+library(survminer)
+library(dplyr)
+library(lubridate)
+library(haven)
+library(here)
+library(gtsummary)
+```
+
+## read data
+```{r}
+stroke <- read_dta(here('stroke_outcome.dta'))
+```
+
+## data exploration
+```{r}
+view(stroke)
+str(stroke)
+```
+```{r}
+stroke <- stroke %>% mutate_if(is.labelled, ~as_factor(.))
+```
+
+Exploratory data analysis
+```{r}
+summary(stroke)
+```
+Format date
+```{r}
+stroke <- stroke %>% mutate(dur = stroke$doa %--% stroke$dod) %>%
+  mutate(dur = as.duration(dur))
+
+# convert to days
+stroke <- stroke %>% mutate(dur_days = dur /ddays(1))
+```
+
+summarize data overall
+```{r}
+stroke %>% 
+  select(-id, -event_s, -race2, -dur, -dur_days) %>%
+  tbl_summary()  %>%
+  as_gt()
+```
+
+
+
+describe data by event (numerical)
+```{r}
+stroke %>% group_by(event) %>% summarise(mean.age = mean(age), sd.age = sd(age),
+                                           mean.gcs = mean(gcs), sd.gcs = sd(gcs),
+                                           mean.sbp = mean(sbp), sd.sbp = sd(sbp),
+                                           mean.dbp = mean(dbp), sd.dbp = sd(dbp))
+```
+
+describe data by event (categorical)
+```{r}
+stroke %>% count(event, dm2)  
+```
+
+```{r}
+stroke %>% count(event, hpt2)  
+```
+
+```{r}
+stroke %>% count(event, race2)  
+```
+
+## Kaplan Meier
+
+Kaplan Meier - to estimate survival probability
+
+conduct KM analysis
+```{r}
+KM1 <- survfit(Surv(time = dur_days, event == 'dead') ~ 1, 
+               type = "kaplan-meier", data = stroke)
+summary(KM1)
+```
+```{r}
+survfit(Surv(time = dur_days, event == 'dead') ~ 1, 
+               type = "kaplan-meier", data = stroke)
+
+# the estimated median survival time is 22 days
+```
+
+probability of surviving at day 2
+```{r}
+(1-(4/224))*0.935
+## calculation at 2 days = 1-(4/224)*0.935 (previous day probability)
+```
+
+
+plot KM
+```{r}
+ggsurvplot(KM1, data = stroke, risk.table = TRUE, linetype = c(1,2), pval = TRUE)
+```
+Median line
+```{r}
+  ggsurvplot(
+  KM1, 
+  conf.int = FALSE, 
+  surv.median.line = "hv",
+  xlab = "Days", 
+  ylab = "Survival probability", 
+  break.time.by = 20,
+  risk.table = T)
+```
+
+
+KM based on gender
+```{r}
+KM1.g <- survfit(Surv(time = dur_days, event == 'dead') ~ sex, 
+                     type = "kaplan-meier", data = stroke)
+summary(KM1.g)
+```
+plot KM by gender
+```{r}
+ggsurvplot(KM1.g, data = stroke, risk.table = TRUE, 
+           linetype = c(1,2), pval = TRUE)
+```
+median survival days based on DM
+```{r}
+KM1.dm
+```
+
+
+KM by DM
+```{r}
+KM1.dm <- survfit(Surv(time = dur_days, event == 'dead') ~ dm2, 
+                     type = "kaplan-meier", data = stroke)
+summary(KM1.dm)
+```
+```{r}
+ggsurvplot(KM1.dm, data = stroke, risk.table = TRUE, 
+           linetype = c(1,2), pval = TRUE)
+```
+KM by HPT
+```{r}
+KM1.hpt <- survfit(Surv(time = dur_days, event == 'dead') ~ hpt2, 
+                     type = "kaplan-meier", data = stroke)
+summary(KM1.hpt)
+```
+
+```{r}
+ggsurvplot(KM1.hpt, data = stroke, risk.table = TRUE, 
+           linetype = c(1,2), pval = TRUE)
+```
+Estimate Survival Function - overall
+```{r}
+quantile(KM1, probs = c(0.25, 0.50, 0.75))
+```
+
+Estimate Survival Function - by DM
+```{r}
+quantile(KM1.dm, probs = c(0.25, 0.50, 0.75))
+```
+Estimate Survival Probability
+```{r}
+stroke %>% group_by(event) %>% 
+  summarize(min.dur = min(dur_days), max.dur = max(dur_days))
+```
+Estimate Survival Probability at different time
+```{r}
+summary(KM1, times = c(35, 40, 45))
+```
+Estimate Survival Probability at different time based on DM status
+```{r}
+summary(KM1.dm, times = c(15, 30, 40))
+```
+
+## Comparing survival rate between groups
+
+survival rate between gender - log rank
+```{r}
+logrank.sex <- survdiff(Surv(time = dur_days, event == 'dead') ~ sex, 
+                        data = stroke, rho = 0)
+logrank.sex
+```
+
+
+survival rate between gender - peto-peto
+```{r}
+peto.sex <- survdiff(Surv(time = dur_days, event == 'dead') ~ sex, 
+                     data = stroke, rho = 1)
+peto.sex
+```
+survival rate between DM/non-DM - log rank
+```{r}
+logrank.dm <- survdiff(Surv(time = dur_days, event == 'dead') ~ dm2, 
+                        data = stroke, rho = 0)
+logrank.dm
+```
+
+survival rate between DM/non-DM - peto-prentice
+```{r}
+peto.dm <- survdiff(Surv(time = dur_days, event == 'dead') ~ dm2, 
+                     data = stroke, rho = 1)
+peto.dm
+
+# there was a significant difference in overall survival probability according to DM status among stroke patient, with a p-value of p <0.001
+```
+
+## Cox Proportionate Hazard
+
